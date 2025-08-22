@@ -131,6 +131,13 @@ found:
     release(&p->lock);
     return 0;
   }
+  // Allocate a usyscall page.
+  if ((p->usyscallpage = (struct usyscall *)kalloc()) == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  p->usyscallpage->pid = p->pid;
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
@@ -160,6 +167,9 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->usyscallpage)
+    kfree((void *)p->usyscallpage);
+  p->usyscallpage = 0;
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -193,6 +203,12 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  if(mappages(pagetable, USYSCALL, PGSIZE, 
+              (uint64)(p->usyscallpage), PTE_R | PTE_U) < 0) {
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
   // map the trapframe page just below the trampoline page, for
   // trampoline.S.
   if(mappages(pagetable, TRAPFRAME, PGSIZE,
@@ -212,6 +228,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmfree(pagetable, sz);
 }
 
@@ -256,6 +273,7 @@ userinit(void)
 
 // Grow or shrink user memory by n bytes.
 // Return 0 on success, -1 on failure.
+// 在 kernel/proc.c 中修改 growproc
 int
 growproc(int n)
 {
