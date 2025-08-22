@@ -65,13 +65,41 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
-    // ok
-  } else {
-    printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
-    setkilled(p);
+  } 
+
+  else if(r_scause() == 13 || r_scause() == 15) {
+  uint64 va = r_stval();
+  if(va >= p->sz || va < p->trapframe->sp)
+    goto bad;
+  struct vma *vma = 0;
+  for(int i = 0; i < NVMA; i++) {
+    if(p->vmas[i].used && va >= p->vmas[i].addr && va < p->vmas[i].addr + p->vmas[i].len) {
+      vma = &p->vmas[i];
+      break;
+    }
   }
+  if(vma == 0)
+    goto bad;
+  char *mem = kalloc();
+  if(mem == 0)
+    goto bad;
+  memset(mem, 0, PGSIZE);
+  ilock(vma->file->ip);
+  uint64 offset = vma->offset + PGROUNDDOWN(va - vma->addr);
+  readi(vma->file->ip, 0, (uint64)mem, offset, PGSIZE);
+  iunlock(vma->file->ip);
+  int perm = PTE_U;
+  if(vma->prot & PROT_READ)
+    perm |= PTE_R;
+  if(vma->prot & PROT_WRITE)
+    perm |= PTE_W;
+  if(vma->prot & PROT_EXEC)
+    perm |= PTE_X;
+  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)mem, perm) != 0) {
+    kfree(mem);
+    goto bad;
+  }
+}
 
   if(killed(p))
     exit(-1);
@@ -128,7 +156,7 @@ usertrapret(void)
   uint64 trampoline_userret = TRAMPOLINE + (userret - trampoline);
   ((void (*)(uint64))trampoline_userret)(satp);
 }
-
+//
 // interrupts and exceptions from kernel code go here via kernelvec,
 // on whatever the current kernel stack is.
 void 

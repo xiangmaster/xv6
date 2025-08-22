@@ -105,3 +105,16 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 };
+
+#define NVMA 16
+struct vma {
+  int used;                   // 是否使用
+  uint64 addr;                // 起始虚拟地址
+  uint64 len;                 // 长度
+  int prot;                   // 保护权限
+  int flags;                  // MAP_SHARED 或 MAP_PRIVATE
+  struct file *file;          // 映射的文件
+  uint64 offset;              // 文件偏移
+};
+
+struct vma vmas[NVMA];        // 虚拟内存区域数组

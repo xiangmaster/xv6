@@ -503,3 +503,84 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void)
+{
+  uint64 addr;
+  uint64 len;
+  int prot;
+  int flags;
+  int fd;
+  uint64 offset;
+  if(argaddr(0, &addr) < 0 || argaddr(1, &len) < 0 || argint(2, &prot) < 0 ||
+     argint(3, &flags) < 0 || argint(4, &fd) < 0 || argaddr(5, &offset) < 0)
+    return -1;
+  if(addr != 0)
+    return -1;
+  if(prot & ~(PROT_READ|PROT_WRITE|PROT_EXEC))
+    return -1;
+  struct proc *p = myproc();
+  struct file *f = p->ofile[fd];
+  if(f == 0)
+    return -1;
+  struct vma *v = 0;
+  for(int i = 0; i < NVMA; i++) {
+    if(p->vmas[i].used == 0) {
+      v = &p->vmas[i];
+      break;
+    }
+  }
+  if(v == 0)
+    return -1;
+  uint64 va = p->sz;
+  if(va + len > MAXVA)
+    return -1;
+  v->used = 1;
+  v->addr = va;
+  v->len = len;
+  v->prot = prot;
+  v->flags = flags;
+  v->file = filedup(f);  // 增加文件引用计数
+  v->offset = offset;
+  p->sz = va + len;
+  return va;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  uint64 len;
+  
+  if(argaddr(0, &addr) < 0 || argaddr(1, &len) < 0)
+    return -1;
+  struct proc *p = myproc();
+  struct vma *vma = 0;
+  int i;
+  for(i = 0; i < NVMA; i++) {
+    if(p->vmas[i].used && addr >= p->vmas[i].addr && addr < p->vmas[i].addr + p->vmas[i].len) {
+      vma = &p->vmas[i];
+      break;
+    }
+  }
+  if(vma == 0)
+    return -1;
+  if(addr != vma->addr && addr + len != vma->addr + vma->len)
+    return -1;
+  if((vma->flags & MAP_SHARED) && (vma->prot & PROT_WRITE)) {
+    filewrite(vma->file, addr, len);
+  }
+  uvmunmap(p->pagetable, addr, len / PGSIZE, 1);
+  if(addr == vma->addr) {
+    vma->addr += len;
+    vma->len -= len;
+  } else {
+    vma->len -= len;
+  }
+  if(vma->len == 0) {
+    fileclose(vma->file);
+    vma->used = 0;
+  }
+  return 0;
+}

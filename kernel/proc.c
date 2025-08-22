@@ -272,7 +272,7 @@ growproc(int n)
   }
   p->sz = sz;
   return 0;
-}
+}//
 
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
@@ -322,6 +322,12 @@ fork(void)
   np->state = RUNNABLE;
   release(&np->lock);
 
+  for(int i = 0; i < NVMA; i++) {
+  if(p->vmas[i].used) {
+    np->vmas[i] = p->vmas[i];
+    filedup(np->vmas[i].file);  // 增加文件引用计数
+  }
+}
   return pid;
 }
 
@@ -379,7 +385,16 @@ exit(int status)
   p->state = ZOMBIE;
 
   release(&wait_lock);
-
+  for(int i = 0; i < NVMA; i++) {
+  if(p->vmas[i].used) {
+    if((p->vmas[i].flags & MAP_SHARED) && (p->vmas[i].prot & PROT_WRITE)) {
+      filewrite(p->vmas[i].file, p->vmas[i].addr, p->vmas[i].len);
+    }
+    uvmunmap(p->pagetable, p->vmas[i].addr, p->vmas[i].len / PGSIZE, 1);
+    fileclose(p->vmas[i].file);
+    p->vmas[i].used = 0;
+  }
+}
   // Jump into the scheduler, never to return.
   sched();
   panic("zombie exit");
