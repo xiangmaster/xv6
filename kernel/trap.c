@@ -65,6 +65,9 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 15){
+    // store page fault
+    handle_cow_fault(r_stval());
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

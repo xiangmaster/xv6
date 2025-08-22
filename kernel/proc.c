@@ -693,3 +693,40 @@ procdump(void)
     printf("\n");
   }
 }
+
+void handle_cow_fault(uint64 va) {
+  struct proc *p = myproc();
+  if(va >= MAXVA){
+    setkilled(p);
+    return;
+  }
+  pte_t *pte = walk(p->pagetable, va, 0);
+  if (pte == 0){
+    setkilled(p);
+    return;
+  }
+  if((*pte & PTE_V) == 0)
+    panic("handle_cow_fault: page not present");
+  if((*pte & PTE_COW) == 0){
+    setkilled(p);
+    return;
+  }
+
+  uint64 pa = PTE2PA(*pte);
+  if (pa == 0)
+    panic("handle_cow_fault: page not present");
+
+  // Allocate a new page
+  char *mem = kalloc();
+  if (mem == 0){
+    setkilled(p);
+    return;
+  }
+
+  // Copy the old page to the new page
+  memmove(mem, (char*)pa, PGSIZE);
+
+  // Install the new page in the PTE with PTE_W set
+  *pte = PA2PTE(mem) | PTE_FLAGS(*pte) | PTE_W;
+  kfree((void*)pa);
+}

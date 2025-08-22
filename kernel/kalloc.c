@@ -14,6 +14,9 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+// Array to keep track of reference counts for each physical memory page
+uint8 *refcount;
+
 struct run {
   struct run *next;
 };
@@ -27,7 +30,9 @@ void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
-  freerange(end, (void*)PHYSTOP);
+  refcount = (uint8*)end;
+  memset(refcount, 0, 8*PGSIZE);
+  freerange(end+8*PGSIZE, (void*)PHYSTOP);
 }
 
 void
@@ -48,9 +53,13 @@ kfree(void *pa)
 {
   struct run *r;
 
-  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
+  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end+8*PGSIZE || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+  if(refcount[((uint64)pa - (uint64)end) / PGSIZE] > 1){
+    refcount[((uint64)pa - (uint64)end) / PGSIZE]--;
+    return; // Only decrement reference count if it's greater than 1
+  }
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
@@ -76,7 +85,23 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r){
     memset((char*)r, 5, PGSIZE); // fill with junk
+    refcount[((uint64)r - (uint64)end) / PGSIZE] = 1; // Initialize reference count
+  }
   return (void*)r;
+}
+
+int
+incref(void *pa)
+{
+  if ((uint64)pa < (uint64)end+8*PGSIZE || (uint64)pa >= PHYSTOP)
+    return -1; // Invalid address
+
+  uint64 index = ((uint64)pa - (uint64)end) / PGSIZE;
+  if (refcount[index] == 0)
+    return -1; // Page not allocated
+
+  refcount[index]++;
+  return refcount[index];
 }
