@@ -132,6 +132,12 @@ found:
     return 0;
   }
 
+  if((p->sigreturntrapframe = (struct trapframe *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -146,6 +152,9 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  p->alarmticks = 0;
+  p->alarmhandler = 0;
+  
   return p;
 }
 
@@ -158,6 +167,9 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  if(p->sigreturntrapframe)
+    kfree((void*)p->sigreturntrapframe);
+  p->sigreturntrapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -692,4 +704,25 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int
+sigalarm(uint64 ticks, void (*handler)())
+{
+  struct proc *p = myproc();
+  p->alarmticks = ticks;
+  p->alarmhandler = handler;
+  p->realarmticks = ticks;
+  p->realarmhandler = handler;
+  return 0;
+}
+
+int
+sigreturn(void)
+{
+  struct proc *p = myproc();
+  memmove(p->trapframe, p->sigreturntrapframe, sizeof(struct trapframe));
+  p->alarmticks = p->realarmticks;
+  p->alarmhandler = p->realarmhandler;
+  return p->trapframe->a0;
 }
